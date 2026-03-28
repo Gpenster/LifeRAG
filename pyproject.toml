@@ -1,0 +1,19 @@
+[project]
+name = "liferag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "chromadb>=1.5.5",
+    "gradio>=6",
+    "langchain>=1.2.13",
+    "langchain-chroma>=1.1.0",
+    "langchain-core>=1.2.23",
+    "langchain-huggingface>=1.2.1",
+    "langchain-openai>=1.1.12",
+    "pypdf>=6.9.2",
+    "python-dotenv>=1.2.2",
+    "sentence-transformers>=5.3.0",
+    "streamlit>=1.55.0",
+]
