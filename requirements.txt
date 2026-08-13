@@ -11,7 +11,7 @@ torch
 transformers
 tqdm
 openai
-gradio
+streamlit
 langchain
 langchain-core
 langchain-text-splitters
@@ -23,6 +23,7 @@ google-generativeai
 anthropic
 chromadb
 plotly
+python-dotenv
 jupyter-dash
 beautifulsoup4
 pydub
