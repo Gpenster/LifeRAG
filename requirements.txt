@@ -1,4 +1,6 @@
 python-dotenv
+sqlalchemy
+psycopg2-binary
 ipykernel
 ipywidgets
 requests
