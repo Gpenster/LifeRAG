@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 import streamlit as st
@@ -7,11 +8,12 @@ from implementation import db
 from implementation.answer import answer_question
 
 load_dotenv(override=True)
+logger = logging.getLogger(__name__)
 
-# There is currently only one system-prompt persona (see
-# implementation/answer.py); this label is what gets recorded alongside
-# each logged interaction so future personalities can be distinguished.
-PERSONALITY = "talent_acquisition_manager"
+# Label recorded alongside each logged interaction. The personality itself
+# lives in implementation/answer.py (DEFAULT_PERSONALITY) — this is just
+# the tag used for the DB record.
+PERSONALITY = "posh_butler"
 
 
 def normalize_content(value) -> str:
@@ -64,6 +66,101 @@ def format_context(context):
     return "\n".join(lines)
 
 
+def friendly_source_name(source_file: str) -> str:
+    """Map a raw PDF filename to the short label shown in the UI."""
+    lowered = (source_file or "").lower()
+
+    if "linkedin" in lowered:
+        return "LinkedIn"
+
+    if "cv" in lowered:
+        return "CV"
+
+    return source_file or "Unknown source"
+
+
+def build_sources_summary(docs):
+    """Reduce retrieved chunks to a concise, deduplicated citation list.
+
+    Returns (sources, excerpts):
+    - sources: [(display_name, [page_numbers...]), ...]
+    - excerpts: [{"source": display_name, "page": page, "snippet": str}, ...]
+      deduplicated by (display_name, page), snippet truncated.
+    """
+    if not docs:
+        return [], []
+
+    pages_by_source: dict[str, list] = {}
+    excerpts = []
+    seen_excerpts = set()
+
+    for doc in docs:
+        source_file = doc.metadata.get("source_file") or doc.metadata.get(
+            "source"
+        ) or "Unknown source"
+        display_name = friendly_source_name(source_file)
+
+        page = doc.metadata.get("page_label")
+        if page is None:
+            raw_page = doc.metadata.get("page")
+            page = raw_page + 1 if isinstance(raw_page, int) else raw_page
+
+        pages = pages_by_source.setdefault(display_name, [])
+        if page is not None and page not in pages:
+            pages.append(page)
+
+        excerpt_key = (display_name, page)
+        if excerpt_key not in seen_excerpts:
+            seen_excerpts.add(excerpt_key)
+            snippet = doc.page_content.strip().replace("\n", " ")
+            if len(snippet) > 220:
+                snippet = snippet[:220].rsplit(" ", 1)[0] + "…"
+            excerpts.append(
+                {"source": display_name, "page": page, "snippet": snippet}
+            )
+
+    def page_sort_key(value):
+        try:
+            return (0, int(value))
+        except (TypeError, ValueError):
+            return (1, str(value))
+
+    sources = [
+        (name, sorted(pages, key=page_sort_key))
+        for name, pages in pages_by_source.items()
+    ]
+
+    return sources, excerpts
+
+
+def render_sources_panel(docs):
+    """Concise 'Sources consulted' citation view, not a raw chunk dump."""
+    if not docs:
+        st.caption(
+            "No sources yet — ask a question to see which parts of "
+            "George's CV and LinkedIn profile were used."
+        )
+        return
+
+    sources, excerpts = build_sources_summary(docs)
+
+    for display_name, pages in sources:
+        st.markdown(f"**{display_name}**")
+        if pages:
+            for page in pages:
+                st.markdown(f"- Page {page}")
+        else:
+            st.markdown("- (page not available)")
+
+    with st.expander("View supporting excerpts"):
+        for excerpt in excerpts:
+            label = excerpt["source"]
+            if excerpt["page"] is not None:
+                label += f", page {excerpt['page']}"
+            st.markdown(f"**{label}**")
+            st.caption(excerpt["snippet"])
+
+
 def ensure_db_ready() -> bool:
     """Create the interactions table once per session and cache the result.
 
@@ -87,6 +184,9 @@ def render_db_status():
     Renders nothing at all when the connection is healthy.
     """
     if st.session_state.get("db_error") is not None:
+        logger.warning(
+            "DB connection unavailable: %s", st.session_state.db_error
+        )
         with st.expander(
             "⚠️ Database connection issue — chat logging is disabled",
             expanded=False,
@@ -94,84 +194,89 @@ def render_db_status():
             st.error(
                 "Could not connect to the Supabase/PostgreSQL database. "
                 "Answers will still work, but conversations are not being "
-                "saved. Check `.streamlit/secrets.toml` -> "
-                "[connections.postgresql] url."
+                "saved."
             )
-            st.exception(st.session_state.db_error)
 
 
 def render_admin_sidebar():
-    """Password-gated view of past sessions, stored in the database."""
+    """Password-gated view of past sessions, tucked away in the sidebar."""
     with st.sidebar:
-        st.subheader("Admin: Interaction History")
+        with st.expander("Admin", expanded=False):
+            admin_password = st.secrets.get("ADMIN_PASSWORD")
+            if not admin_password:
+                st.caption(
+                    "Set ADMIN_PASSWORD in .streamlit/secrets.toml to "
+                    "enable the history view."
+                )
+                return
 
-        admin_password = st.secrets.get("ADMIN_PASSWORD")
-        if not admin_password:
-            st.caption(
-                "Set ADMIN_PASSWORD in .streamlit/secrets.toml to enable "
-                "the history view."
+            entered_password = st.text_input(
+                "Admin password", type="password", key="admin_password_input"
             )
-            return
 
-        entered_password = st.text_input(
-            "Admin password", type="password", key="admin_password_input"
-        )
+            if not entered_password:
+                return
 
-        if not entered_password:
-            return
+            if entered_password != admin_password:
+                st.error("Incorrect password.")
+                return
 
-        if entered_password != admin_password:
-            st.error("Incorrect password.")
-            return
+            render_admin_history()
 
-        if st.session_state.get("db_error") is not None:
-            st.error("Database is unavailable, so history cannot be loaded.")
-            st.exception(st.session_state.db_error)
-            return
 
-        try:
-            sessions = db.fetch_sessions()
-        except Exception as exc:
-            st.error("Failed to query session history.")
-            st.exception(exc)
-            return
+def render_admin_history():
+    """Session/turn history view. Only called once the admin password checks out."""
+    if st.session_state.get("db_error") is not None:
+        st.error("Database is unavailable, so history cannot be loaded.")
+        return
 
-        if sessions.empty:
-            st.caption("No interactions logged yet.")
-            return
+    try:
+        sessions = db.fetch_sessions()
+    except Exception:
+        logger.exception("Failed to query session history")
+        st.error("Failed to query session history.")
+        return
 
-        st.caption(f"{len(sessions)} session(s) logged.")
+    if sessions.empty:
+        st.caption("No interactions logged yet.")
+        return
 
-        session_options = sessions["session_id"].tolist()
-        selected_session = st.selectbox(
-            "Session",
-            session_options,
-            format_func=lambda sid: (
-                f"{sid[:8]}… — "
-                f"{sessions.loc[sessions['session_id'] == sid, 'started_at'].iloc[0]} "
-                f"({sessions.loc[sessions['session_id'] == sid, 'turns'].iloc[0]} turns)"
-            ),
-        )
+    st.caption(f"{len(sessions)} session(s) logged.")
 
-        try:
-            rows = db.fetch_session_rows(selected_session)
-        except Exception as exc:
-            st.error("Failed to query that session's rows.")
-            st.exception(exc)
-            return
+    session_options = sessions["session_id"].tolist()
+    selected_session = st.selectbox(
+        "Session",
+        session_options,
+        format_func=lambda sid: (
+            f"{sid[:8]}… — "
+            f"{sessions.loc[sessions['session_id'] == sid, 'started_at'].iloc[0]} "
+            f"({sessions.loc[sessions['session_id'] == sid, 'turns'].iloc[0]} turns)"
+        ),
+    )
 
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+    try:
+        rows = db.fetch_session_rows(selected_session)
+    except Exception:
+        logger.exception("Failed to query session rows for %s", selected_session)
+        st.error("Failed to query that session's rows.")
+        return
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def main():
     st.set_page_config(
-        page_title="George Penny Knowledge Assistant",
-        page_icon="💬",
+        page_title="Ask George's Butler",
+        page_icon="🎩",
         layout="wide",
     )
 
-    st.title("George Penny Knowledge Assistant")
-    st.caption("Ask questions about George Penny.")
+    st.title("🎩 Ask George's Butler")
+    st.caption(
+        "A small RAG assistant built with Python, Streamlit, LangChain "
+        "and OpenAI — it answers questions using George Penny's CV and "
+        "LinkedIn profile, and nothing else."
+    )
 
     # Initialise session state
     if "messages" not in st.session_state:
@@ -184,6 +289,9 @@ def main():
         st.session_state.context = (
             "## Relevant Context\n\n_No context retrieved._"
         )
+
+    if "source_docs" not in st.session_state:
+        st.session_state.source_docs = []
 
     ensure_db_ready()
     render_db_status()
@@ -250,6 +358,7 @@ def main():
                         st.session_state.context = format_context(
                             context
                         )
+                        st.session_state.source_docs = context
 
                         # Persist exactly one row per successful answer.
                         # Logging failures must not be confused with RAG
@@ -264,31 +373,29 @@ def main():
                                     context=st.session_state.context,
                                     personality=PERSONALITY,
                                 )
-                            except Exception as db_exc:
+                            except Exception:
+                                logger.exception("Failed to log interaction")
                                 st.warning(
                                     "Answer was generated, but saving it "
                                     "to the database failed."
                                 )
-                                st.exception(db_exc)
 
-                    except Exception as exc:
+                    except Exception:
+                        logger.exception("Failed to answer question")
                         st.error(
-                            "Something went wrong while answering "
-                            "the question."
+                            "One moment, sir — something has gone amiss "
+                            "while consulting the records. Do try again "
+                            "shortly."
                         )
-
-                        # Useful while developing. You may want to
-                        # remove this before exposing the app.
-                        st.exception(exc)
 
             # Needed so the context column refreshes immediately
             st.rerun()
 
     with context_column:
-        st.subheader("Retrieved Context")
+        st.subheader("Sources consulted")
 
         with st.container(height=650, border=True):
-            st.markdown(st.session_state.context)
+            render_sources_panel(st.session_state.source_docs)
 
 
 if __name__ == "__main__":
