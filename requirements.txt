@@ -39,3 +39,5 @@ wandb
 jupyterlab
 langchain_huggingface
 pypdf
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
