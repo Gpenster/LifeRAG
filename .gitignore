@@ -1,3 +1,6 @@
 .venv/
 .env
 .streamlit/secrets.toml
+implementation/__pycache__/
+*.pyc
+vector_db/
