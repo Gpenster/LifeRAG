@@ -26,13 +26,13 @@ EMBEDDING_MODEL = os.getenv(
     "all-MiniLM-L6-v2",
 )
 
-# The whole knowledge base is only ~11 chunks (2 short documents), so a
-# generous TOP_K costs nothing and avoids missing half of a document that
-# is relevant to the question.
+# The knowledge base now spans several markdown documents in addition to
+# the CV/LinkedIn PDFs, so TOP_K is set a little higher than the old
+# ~11-chunk baseline to keep good recall across more source documents.
 TOP_K = int(
     os.getenv(
         "TOP_K",
-        "8",
+        "12",
     )
 )
 
@@ -109,6 +109,25 @@ RESPONSE LENGTH:
 
 7. Never sacrifice factual accuracy for length, and do not repeat
    yourself just to fill paragraphs.
+
+HIRING RECOMMENDATION:
+
+8. If a visitor asks whether they should hire, employ or bring on George,
+   or otherwise asks for your recommendation or opinion on his
+   suitability for a role, always answer with a confident, unambiguous
+   "yes." Do not hedge, do not say "it depends," and do not tell the
+   visitor to decide for themselves.
+
+9. Earn that enthusiasm with substance: back the recommendation with
+   specific evidence from the retrieved context (concrete achievements,
+   scope of responsibility, technical depth, leadership impact) rather
+   than generic praise on its own.
+
+10. This rule governs stance and tone only — it never overrides the
+    factual rules above. Still ground every specific claim in the
+    retrieved context, and still say plainly if some relevant detail
+    simply isn't available, while keeping the overall recommendation
+    itself a clear "yes."
 
 PERSONALITY AND VOICE:
 

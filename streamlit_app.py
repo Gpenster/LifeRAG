@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from implementation import db
 from implementation.answer import answer_question
+from implementation.sources import build_sources_summary
 
 load_dotenv(override=True)
 logger = logging.getLogger(__name__)
@@ -66,98 +67,30 @@ def format_context(context):
     return "\n".join(lines)
 
 
-def friendly_source_name(source_file: str) -> str:
-    """Map a raw PDF filename to the short label shown in the UI."""
-    lowered = (source_file or "").lower()
-
-    if "linkedin" in lowered:
-        return "LinkedIn"
-
-    if "cv" in lowered:
-        return "CV"
-
-    return source_file or "Unknown source"
-
-
-def build_sources_summary(docs):
-    """Reduce retrieved chunks to a concise, deduplicated citation list.
-
-    Returns (sources, excerpts):
-    - sources: [(display_name, [page_numbers...]), ...]
-    - excerpts: [{"source": display_name, "page": page, "snippet": str}, ...]
-      deduplicated by (display_name, page), snippet truncated.
-    """
-    if not docs:
-        return [], []
-
-    pages_by_source: dict[str, list] = {}
-    excerpts = []
-    seen_excerpts = set()
-
-    for doc in docs:
-        source_file = doc.metadata.get("source_file") or doc.metadata.get(
-            "source"
-        ) or "Unknown source"
-        display_name = friendly_source_name(source_file)
-
-        page = doc.metadata.get("page_label")
-        if page is None:
-            raw_page = doc.metadata.get("page")
-            page = raw_page + 1 if isinstance(raw_page, int) else raw_page
-
-        pages = pages_by_source.setdefault(display_name, [])
-        if page is not None and page not in pages:
-            pages.append(page)
-
-        excerpt_key = (display_name, page)
-        if excerpt_key not in seen_excerpts:
-            seen_excerpts.add(excerpt_key)
-            snippet = doc.page_content.strip().replace("\n", " ")
-            if len(snippet) > 220:
-                snippet = snippet[:220].rsplit(" ", 1)[0] + "…"
-            excerpts.append(
-                {"source": display_name, "page": page, "snippet": snippet}
-            )
-
-    def page_sort_key(value):
-        try:
-            return (0, int(value))
-        except (TypeError, ValueError):
-            return (1, str(value))
-
-    sources = [
-        (name, sorted(pages, key=page_sort_key))
-        for name, pages in pages_by_source.items()
-    ]
-
-    return sources, excerpts
-
-
 def render_sources_panel(docs):
-    """Concise 'Sources consulted' citation view, not a raw chunk dump."""
+    """Concise 'Sources & Evidence' citation view, not a raw chunk dump.
+
+    Shows one friendly "Document — Section" (or "Document — Page N" for
+    PDFs) label per unique retrieved chunk. Similarity scores and raw
+    filesystem paths are never surfaced here; a short excerpt per source
+    is available in the "View supporting evidence" expander for anyone
+    who wants to check the grounding.
+    """
     if not docs:
         st.caption(
             "No sources yet — ask a question to see which parts of "
-            "George's CV and LinkedIn profile were used."
+            "George's professional knowledge base were used."
         )
         return
 
-    sources, excerpts = build_sources_summary(docs)
+    labels, excerpts = build_sources_summary(docs)
 
-    for display_name, pages in sources:
-        st.markdown(f"**{display_name}**")
-        if pages:
-            for page in pages:
-                st.markdown(f"- Page {page}")
-        else:
-            st.markdown("- (page not available)")
+    for label in labels:
+        st.markdown(f"- {label}")
 
-    with st.expander("View supporting excerpts"):
+    with st.expander("View supporting evidence"):
         for excerpt in excerpts:
-            label = excerpt["source"]
-            if excerpt["page"] is not None:
-                label += f", page {excerpt['page']}"
-            st.markdown(f"**{label}**")
+            st.markdown(f"**{excerpt['label']}**")
             st.caption(excerpt["snippet"])
 
 
@@ -266,17 +199,19 @@ def render_admin_history():
 
 def main():
     st.set_page_config(
-        page_title="Ask George's Butler",
+        page_title="George Penny — Portfolio",
         page_icon="🎩",
         layout="wide",
     )
 
-    st.title("🎩 Ask George's Butler")
-    st.caption(
-        "A small RAG assistant built with Python, Streamlit, LangChain "
-        "and OpenAI — it answers questions using George Penny's CV and "
-        "LinkedIn profile, and nothing else."
+    st.title("George Penny — Credit Risk, Analytics & Applied AI")
+    st.markdown(
+        "*This is an AI-powered version of my professional portfolio. "
+        "Rather than squeezing more than ten years of experience into "
+        "two pages, you can ask it about my career, projects, technical "
+        "work and leadership experience.*"
     )
+    st.divider()
 
     # Initialise session state
     if "messages" not in st.session_state:
@@ -392,7 +327,7 @@ def main():
             st.rerun()
 
     with context_column:
-        st.subheader("Sources consulted")
+        st.subheader("Sources & Evidence")
 
         with st.container(height=650, border=True):
             render_sources_panel(st.session_state.source_docs)

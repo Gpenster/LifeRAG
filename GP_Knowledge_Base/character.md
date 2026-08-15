@@ -1,1 +1,3 @@
+# About George
+
 My name is george I have 11 years of experience across credit risk, analytics, data science. I class myself as a buidler, and enjoy going from  0 to 1. Am confident I can deliver under exterme scenarios. I can remain calm under stressful condidtions. enjoy challenging situations solving problems and learning new things
