@@ -1,4 +1,5 @@
 import logging
+import random
 import uuid
 
 import streamlit as st
@@ -15,6 +16,28 @@ logger = logging.getLogger(__name__)
 # lives in implementation/answer.py (DEFAULT_PERSONALITY) — this is just
 # the tag used for the DB record.
 PERSONALITY = "posh_butler"
+
+# A light, professional pirate theme — kept mostly to wording and emoji so
+# the app still reads cleanly as a CV portfolio piece.
+APP_TITLE = "🏴‍☠️ George Penny — Credit Risk, Analytics & Applied AI"
+APP_TAGLINE = (
+    "*Ask the crew about my career, projects, technical work or what "
+    "I've been building.*"
+)
+
+LOADING_MESSAGES = [
+    "🗺️ Checking the charts...",
+    "⛵ Sailing through the archives...",
+    "🧭 Searching the records...",
+    "💰 Looking for useful treasure...",
+]
+
+SUGGESTED_QUESTIONS = [
+    ("💼 Biggest career achievements", "What are George's biggest career achievements?"),
+    ("🤖 AI projects", "What AI projects has George worked on?"),
+    ("📊 Credit risk experience", "Tell me about George's credit risk experience."),
+    ("🚴 Outside work", "What does George do outside work?"),
+]
 
 
 def normalize_content(value) -> str:
@@ -78,8 +101,8 @@ def render_sources_panel(docs):
     """
     if not docs:
         st.caption(
-            "No sources yet — ask a question to see which parts of "
-            "George's professional knowledge base were used."
+            "🗺️ No treasure found yet — ask a question to see which "
+            "parts of George's knowledge base were used."
         )
         return
 
@@ -88,7 +111,7 @@ def render_sources_panel(docs):
     for label in labels:
         st.markdown(f"- {label}")
 
-    with st.expander("View supporting evidence"):
+    with st.expander("🧭 View supporting evidence"):
         for excerpt in excerpts:
             st.markdown(f"**{excerpt['label']}**")
             st.caption(excerpt["snippet"])
@@ -200,17 +223,18 @@ def render_admin_history():
 def main():
     st.set_page_config(
         page_title="George Penny — Portfolio",
-        page_icon="🎩",
+        page_icon="🏴‍☠️",
         layout="wide",
     )
 
-    st.title("George Penny — Credit Risk, Analytics & Applied AI")
+    st.title(APP_TITLE)
     st.markdown(
         "*This is an AI-powered version of my professional portfolio. "
         "Rather than squeezing more than ten years of experience into "
         "two pages, you can ask it about my career, projects, technical "
         "work and leadership experience.*"
     )
+    st.markdown(APP_TAGLINE)
     st.divider()
 
     # Initialise session state
@@ -236,7 +260,7 @@ def main():
     chat_column, context_column = st.columns([1, 1])
 
     with chat_column:
-        st.subheader("Conversation")
+        st.subheader("⚓ Ask the Crew")
 
         # Render existing conversation
         for message in st.session_state.messages:
@@ -246,9 +270,23 @@ def main():
             with st.chat_message(role):
                 st.markdown(content)
 
+        if not st.session_state.messages:
+            st.caption("Not sure where to start?")
+            suggestion_columns = st.columns(len(SUGGESTED_QUESTIONS))
+            for column, (label, question) in zip(
+                suggestion_columns, SUGGESTED_QUESTIONS
+            ):
+                with column:
+                    if st.button(label, use_container_width=True):
+                        st.session_state.pending_prompt = question
+                        st.rerun()
+
         prompt = st.chat_input(
-            "Ask anything about George Penny..."
+            "Ask about George's career, projects or adventures..."
         )
+
+        if not prompt and st.session_state.get("pending_prompt"):
+            prompt = st.session_state.pop("pending_prompt")
 
         if prompt:
             prompt = normalize_content(prompt)
@@ -268,7 +306,7 @@ def main():
             prior_history = st.session_state.messages[:-1]
 
             with st.chat_message("assistant"):
-                with st.spinner("Searching knowledge base..."):
+                with st.spinner(random.choice(LOADING_MESSAGES)):
                     try:
                         result = answer_question(
                             prompt,
@@ -318,19 +356,21 @@ def main():
                     except Exception:
                         logger.exception("Failed to answer question")
                         st.error(
-                            "One moment, sir — something has gone amiss "
-                            "while consulting the records. Do try again "
-                            "shortly."
+                            "🌊 Rough waters — something went wrong while "
+                            "searching the records. Give it another try."
                         )
 
             # Needed so the context column refreshes immediately
             st.rerun()
 
     with context_column:
-        st.subheader("Sources & Evidence")
+        st.subheader("🗺️ Sources & Evidence")
 
         with st.container(height=650, border=True):
             render_sources_panel(st.session_state.source_docs)
+
+    st.divider()
+    st.caption("⚓ Built with Python, Streamlit and RAG")
 
 
 if __name__ == "__main__":
