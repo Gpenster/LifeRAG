@@ -19,7 +19,7 @@ PERSONALITY = "posh_butler"
 
 # A light, professional pirate theme — kept mostly to wording and emoji so
 # the app still reads cleanly as a CV portfolio piece.
-APP_TITLE = "🏴‍☠️ George Penny — Credit Risk, Analytics & Applied AI"
+APP_TITLE = "🏴‍☠️ George Penny — CV"
 APP_TAGLINE = (
     "*Ask the crew about my career, projects, technical work or what "
     "I've been building.*"
