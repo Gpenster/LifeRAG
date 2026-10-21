@@ -241,8 +241,8 @@ def main():
         "*This is an AI-powered version of my professional portfolio. "
         "Rather than squeezing more than ten years of experience into "
         "two pages, you can ask it about my career, projects, technical "
-        "work and leadership experience. And yes, it's pirate-themed."
-        "No particular reason, I just thought it would be a bit of fun.*"
+        "work and leadership experience. And yes, it's pirate themed. "
+        "No particular reason, I just thought it would be a bit of fun...*"
     )
     st.markdown(APP_TAGLINE)
     st.divider()
