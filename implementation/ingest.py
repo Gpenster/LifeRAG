@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import glob
 import os
+import shutil
 
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
@@ -100,7 +101,36 @@ def chunk_documents(documents: list[Document]) -> list[Document]:
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
     )
-    return splitter.split_documents(documents)
+    chunks = splitter.split_documents(documents)
+
+    for chunk in chunks:
+        add_context_header(chunk)
+
+    return chunks
+
+
+def add_context_header(chunk: Document) -> None:
+    """Prefix a markdown chunk with its document title and section.
+
+    strip_headers=True removes the headings from the chunk text, so without
+    this a chunk from klarna.md may never mention "Klarna" and scores
+    poorly for questions like "What did George do at Klarna?". The header
+    is stored in metadata too, so the UI can strip it back off when it
+    shows the passage under its own "Document — Section" label.
+    """
+    if chunk.metadata.get("doc_type") != "knowledge_base":
+        return
+
+    parts = [
+        chunk.metadata.get("doc_title"),
+        chunk.metadata.get("section"),
+    ]
+    header = " — ".join(part.strip() for part in parts if part)
+    if not header:
+        return
+
+    chunk.metadata["context_header"] = header
+    chunk.page_content = f"{header}\n\n{chunk.page_content}"
 
 
 def build_vector_store() -> Chroma:
@@ -117,10 +147,12 @@ def build_vector_store() -> Chroma:
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
+    # Start from an empty directory rather than delete_collection():
+    # Chroma leaves the old collection's segment folder on disk, and since
+    # vector_db/ is committed for deployment, stale folders would pile up
+    # in the repo on every rebuild.
     if os.path.exists(DB_NAME):
-        Chroma(
-            persist_directory=DB_NAME, embedding_function=embeddings
-        ).delete_collection()
+        shutil.rmtree(DB_NAME)
 
     vectorstore = Chroma.from_documents(
         documents=chunks,

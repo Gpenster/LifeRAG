@@ -3,4 +3,5 @@
 .streamlit/secrets.toml
 implementation/__pycache__/
 *.pyc
-vector_db/
+.DS_Store 
+__pycache__/

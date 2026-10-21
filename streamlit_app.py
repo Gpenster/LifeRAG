@@ -6,16 +6,16 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from implementation import db
-from implementation.answer import answer_question
+from implementation.answer import DEFAULT_PERSONALITY_NAME, answer_question
 from implementation.sources import build_sources_summary
 
 load_dotenv(override=True)
 logger = logging.getLogger(__name__)
 
 # Label recorded alongside each logged interaction. The personality itself
-# lives in implementation/answer.py (DEFAULT_PERSONALITY) — this is just
-# the tag used for the DB record.
-PERSONALITY = "posh_butler"
+# lives in implementation/answer.py (DEFAULT_PERSONALITY), next to this
+# name, so the two can't drift apart.
+PERSONALITY = DEFAULT_PERSONALITY_NAME
 
 # A light, professional pirate theme — kept mostly to wording and emoji so
 # the app still reads cleanly as a CV portfolio piece.
@@ -95,10 +95,18 @@ def render_sources_panel(docs):
 
     Shows one friendly "Document — Section" (or "Document — Page N" for
     PDFs) label per unique retrieved chunk. Similarity scores and raw
-    filesystem paths are never surfaced here; a short excerpt per source
-    is available in the "View supporting evidence" expander for anyone
-    who wants to check the grounding.
+    filesystem paths are never surfaced here; the full text of every
+    retrieved chunk (exactly what the model was given) is available in the
+    "View supporting evidence" expander for anyone who wants to check the
+    grounding.
     """
+    if not docs and st.session_state.get("messages"):
+        st.caption(
+            "🗺️ No sources were used for the last answer — that "
+            "treasure isn't on George's map."
+        )
+        return
+
     if not docs:
         st.caption(
             "🗺️ No treasure found yet — ask a question to see which "
@@ -114,7 +122,8 @@ def render_sources_panel(docs):
     with st.expander("🧭 View supporting evidence"):
         for excerpt in excerpts:
             st.markdown(f"**{excerpt['label']}**")
-            st.caption(excerpt["snippet"])
+            for passage in excerpt["passages"]:
+                st.caption(passage)
 
 
 def ensure_db_ready() -> bool:
@@ -144,7 +153,7 @@ def render_db_status():
             "DB connection unavailable: %s", st.session_state.db_error
         )
         with st.expander(
-            "⚠️ Database — chat logging is d",
+            "⚠️ Database — chat logging is disabled",
             expanded=False,
         ):
             st.error(

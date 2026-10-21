@@ -1,4 +1,4 @@
-Professional Overview
+# Professional Overview
 
 Credit risk, analytics and applied AI leader with more than 10 years of experience building underwriting strategies, decision engines, monitoring frameworks and data products across fintech and financial services.
 

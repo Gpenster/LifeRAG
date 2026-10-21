@@ -111,29 +111,39 @@ def build_sources_summary(docs):
     - labels: [str, ...] unique "Document — Section" style labels, in the
       order they were first seen (dedupes repeated chunks from the same
       section/page).
-    - excerpts: [{"label": str, "snippet": str}, ...] one short excerpt per
-      unique label, for the "View supporting evidence" expander.
+    - excerpts: [{"label": str, "passages": [str, ...]}, ...] one entry per
+      unique label, holding the full text of every chunk retrieved under
+      that label. Several chunks often share a label (e.g. a PDF page split
+      into multiple chunks), so keeping all of them means the evidence
+      panel shows exactly what the model was given, not just the opening
+      lines of the first chunk.
     """
     if not docs:
         return [], []
 
     labels: list[str] = []
-    excerpts = []
-    seen = set()
+    passages_by_label: dict[str, list[str]] = {}
 
     for doc in docs:
         metadata = doc.metadata or {}
         label = build_source_label(metadata)
 
-        if label in seen:
-            continue
-        seen.add(label)
+        if label not in passages_by_label:
+            labels.append(label)
+            passages_by_label[label] = []
 
-        labels.append(label)
+        passage = doc.page_content.strip()
+        header = metadata.get("context_header")
+        if header and passage.startswith(header):
+            # Added at ingestion for retrieval only; the label already
+            # shows it, so don't repeat it above the passage.
+            passage = passage[len(header):].strip()
+        if passage and passage not in passages_by_label[label]:
+            passages_by_label[label].append(passage)
 
-        snippet = doc.page_content.strip().replace("\n", " ")
-        if len(snippet) > 220:
-            snippet = snippet[:220].rsplit(" ", 1)[0] + "…"
-        excerpts.append({"label": label, "snippet": snippet})
+    excerpts = [
+        {"label": label, "passages": passages_by_label[label]}
+        for label in labels
+    ]
 
     return labels, excerpts

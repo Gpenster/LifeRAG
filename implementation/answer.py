@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any
 
@@ -9,7 +10,10 @@ from langchain_core.messages import (
     HumanMessage,
     AIMessage,
 )
+from pydantic import BaseModel, Field
 
+
+logger = logging.getLogger(__name__)
 
 MODEL = os.getenv(
     "OPENAI_MODEL",
@@ -37,9 +41,20 @@ TOP_K = int(
 )
 
 
+# How many recent conversation messages are used to turn a follow-up
+# ("tell me more about that") into a standalone search query, and how much
+# of each message is kept for that purpose.
+HISTORY_MESSAGES_FOR_SEARCH = 6
+HISTORY_CHARS_PER_MESSAGE = 600
+
+
 # ============================================================
 # Default personality
 # ============================================================
+
+# Label recorded alongside each logged interaction so the DB shows which
+# voice produced an answer. Keep this in step with DEFAULT_PERSONALITY.
+DEFAULT_PERSONALITY_NAME = "pirate"
 
 DEFAULT_PERSONALITY = """
 You speak as George Penny's personal pirate: confident, witty, adventurous
@@ -164,9 +179,29 @@ PERSONALITY AND VOICE:
 
 {personality}
 
+SOURCES:
+
+11. Alongside the answer, list the numbers of the [Document N] blocks
+    your answer actually relies on. Leave out documents you did not use,
+    even if they were retrieved. If you could not answer from the
+    context, return an empty list.
+
 RETRIEVED CONTEXT:
 
 {context}
+"""
+
+
+SEARCH_QUERY_PROMPT = """
+You rewrite a visitor's latest message into a standalone search query for
+a knowledge base about George Penny's career, projects and interests.
+
+Use the conversation so far to resolve references such as "that", "it",
+"there", "he" or "tell me more". Name the specific employer, project or
+topic being referred to. If the latest message is already standalone,
+return it unchanged.
+
+Return only the rewritten query, with no explanation.
 """
 
 
@@ -189,14 +224,29 @@ def get_vectorstore() -> Chroma:
 # LLM
 # ============================================================
 
-# temperature=0 was actively suppressing the butler personality (flat,
+# temperature=0 was actively suppressing the personality (flat,
 # maximally deterministic phrasing). Factual grounding is enforced by the
 # system prompt's context-only rules, not by temperature, so a moderate
-# value here just gives the character room to come through.
-def get_llm() -> ChatOpenAI:
+# value here just gives the character room to come through. Query
+# rewriting has no personality to express, so it passes temperature=0.
+def get_llm(temperature: float = 0.6) -> ChatOpenAI:
     return ChatOpenAI(
         model=MODEL,
-        temperature=0.6,
+        temperature=temperature,
+    )
+
+
+class CitedAnswer(BaseModel):
+    """Structured reply: the answer plus the documents it relies on."""
+
+    answer: str = Field(
+        description="The reply to the visitor, in Markdown."
+    )
+    sources: list[int] = Field(
+        description=(
+            "Numbers N of the [Document N] blocks the answer actually "
+            "relies on. Empty if none of the context was used."
+        )
     )
 
 
@@ -399,6 +449,55 @@ def build_history_messages(
 
 
 # ============================================================
+# Search query
+# ============================================================
+
+def build_search_query(
+    question: str,
+    history_messages: list[Any],
+) -> str:
+    """
+    Turn a follow-up into a standalone query for retrieval.
+
+    Retrieval only sees this query, not the conversation, so a follow-up
+    like "tell me more about that" would otherwise pull back unrelated
+    chunks while the LLM answers from the earlier turns. First questions
+    are searched as-is, without an extra LLM call.
+    """
+
+    if not history_messages:
+        return question
+
+    transcript = []
+
+    for message in history_messages[-HISTORY_MESSAGES_FOR_SEARCH:]:
+        speaker = (
+            "Visitor"
+            if isinstance(message, HumanMessage)
+            else "Assistant"
+        )
+        content = str(message.content)[:HISTORY_CHARS_PER_MESSAGE]
+        transcript.append(f"{speaker}: {content}")
+
+    transcript.append(f"Visitor (latest): {question}")
+
+    try:
+        response = get_llm(temperature=0).invoke(
+            [
+                SystemMessage(content=SEARCH_QUERY_PROMPT),
+                HumanMessage(content="\n\n".join(transcript)),
+            ]
+        )
+    except Exception:
+        logger.exception("Search query rewrite failed; using question as-is")
+        return question
+
+    rewritten = str(response.content).strip()
+
+    return rewritten or question
+
+
+# ============================================================
 # Answer generation
 # ============================================================
 
@@ -424,12 +523,21 @@ def answer_question(
     # Retrieve documents
     # --------------------------------------------------------
 
+    history_messages = build_history_messages(
+        history
+    )
+
+    search_query = build_search_query(
+        question,
+        history_messages,
+    )
+
     vectorstore = get_vectorstore()
 
     docs_with_scores = (
         vectorstore
         .similarity_search_with_relevance_scores(
-            question,
+            search_query,
             k=TOP_K,
         )
     )
@@ -474,7 +582,9 @@ def answer_question(
     # Generate answer
     # --------------------------------------------------------
 
-    llm = get_llm()
+    llm = get_llm().with_structured_output(
+        CitedAnswer
+    )
 
     response = llm.invoke(
         [
@@ -482,9 +592,7 @@ def answer_question(
                 content=system_prompt
             ),
         ]
-        + build_history_messages(
-            history
-        )
+        + history_messages
         + [
             HumanMessage(
                 content=question
@@ -493,17 +601,41 @@ def answer_question(
     )
 
     # --------------------------------------------------------
+    # Keep only the documents the answer relies on
+    # --------------------------------------------------------
+
+    # Document numbers are 1-based, matching format_context(). Invalid or
+    # repeated numbers are ignored rather than trusted.
+    cited_indexes = sorted(
+        {
+            number - 1
+            for number in response.sources
+            if 1 <= number <= len(docs)
+        }
+    )
+
+    cited_docs_with_scores = [
+        docs_with_scores[index]
+        for index in cited_indexes
+    ]
+
+    # --------------------------------------------------------
     # Return result
     # --------------------------------------------------------
 
     return {
-        "answer": str(
-            response.content
-        ),
-        "context": docs,
+        "answer": response.answer,
+        # Only the documents the answer cites, so the Sources panel
+        # matches the answer rather than every retrieved chunk.
+        "context": [
+            doc
+            for doc, _ in cited_docs_with_scores
+        ],
+        "retrieved": docs,
+        "search_query": search_query,
         "references": (
             build_references(
-                docs_with_scores
+                cited_docs_with_scores
             )
         ),
     }
