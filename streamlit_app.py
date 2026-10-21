@@ -144,12 +144,12 @@ def render_db_status():
             "DB connection unavailable: %s", st.session_state.db_error
         )
         with st.expander(
-            "⚠️ Database connection issue — chat logging is disabled",
+            "⚠️ Database — chat logging is d",
             expanded=False,
         ):
             st.error(
                 "Could not connect to the Supabase/PostgreSQL database. "
-                "Answers will still work, but conversations are not being "
+                "Answers will still work but conversations are not being "
                 "saved."
             )
 
